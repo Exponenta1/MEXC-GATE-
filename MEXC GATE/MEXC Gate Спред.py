@@ -2420,13 +2420,14 @@ class TwoExchangeMonitor:
         # Проверяем смену дня
         if self.daily_tracker.should_reset_daily_spreads():
             self.daily_tracker.reset_daily_spreads()
-            
+
             # Создаём новое закреплённое сообщение для нового дня
             message_text = self.daily_tracker.format_daily_spreads_message()
-            message_id = self.telegram.create_pinned_message_once(message_text)
-            
+            message_id = self.telegram.create_pinned_message_with_retry(message_text, max_attempts=3)
+
             if message_id:
                 self.daily_tracker.pinned_message_id = message_id
+                self.daily_tracker.pin_created_today = True
                 print(f"✅ Создан новый закреп {message_id} для {self.daily_tracker.current_date_for_pin}")
             else:
                 print("❌ Не удалось создать новый закреп")
@@ -2436,13 +2437,32 @@ class TwoExchangeMonitor:
         if self.daily_tracker.pinned_message_id:
             message_text = self.daily_tracker.format_daily_spreads_message()
             success, _ = self.telegram.update_spread_message(
-                self.daily_tracker.pinned_message_id, 
+                self.daily_tracker.pinned_message_id,
                 message_text
             )
-            
+
             if not success:
-                print(f"⚠️ Закрепленное сообщение {self.daily_tracker.pinned_message_id} недоступно для обновления")
-                self.daily_tracker.pinned_message_id = None
+                old_message_id = self.daily_tracker.pinned_message_id
+                print(f"⚠️ Закрепленное сообщение {old_message_id} недоступно для обновления")
+                print("🔄 Пытаемся найти существующий пост или создать новый...")
+
+                # Сначала пытаемся найти существующий пост
+                existing_pin = self.daily_tracker.try_find_existing_pin(self.telegram, max_attempts=3)
+
+                if existing_pin:
+                    print(f"✅ Найден существующий пост {existing_pin}, используем его")
+                    self.daily_tracker.pinned_message_id = existing_pin
+                else:
+                    # Если не нашли, создаём новый
+                    print("📌 Создаём новый закреплённый пост...")
+                    new_message_id = self.telegram.create_pinned_message_with_retry(message_text, max_attempts=3)
+
+                    if new_message_id:
+                        self.daily_tracker.pinned_message_id = new_message_id
+                        print(f"✅ Создан новый закреп {new_message_id}")
+                    else:
+                        print("❌ Не удалось создать новый закреп")
+                        self.daily_tracker.pinned_message_id = None
     
     def print_spreads(self, spreads: List[Dict], threshold: float):
         """Выводит спреды в красивом формате с ценами"""
